@@ -4,6 +4,8 @@ import os
 import zlib
 import shutil
 
+MAX_RETRIES = 3
+
 def get_pdf(url, pmc_id):
     ftp_url = 'ftp.ncbi.nlm.nih.gov'
     ftp_directory = '/pub/pmc'
@@ -27,32 +29,48 @@ def get_pdf(url, pmc_id):
     if file_exists:
         # Download the file
         with open(filename, 'wb') as file:
-            ftp.retrbinary('RETR ' + filename, file.write)
-        #print(f"File '{filename}' downloaded successfully.")
+            retries = 0
+            while retries < MAX_RETRIES:
+                try:
+                    ftp.retrbinary('RETR ' + filename, file.write)
+                    break
+                except EOFError:
+                    retries += 1
+                    if retries == MAX_RETRIES:
+                        print(f"Error: Maximum retries exceeded. Skipping download.")
+                        return pmc_id, None
+                    else:
+                        print(f"Retrying download... Attempt {retries}/{MAX_RETRIES}")
 
         try:
             pdf_name_list = list()
             # Extract the content from the tar.gz file
-            with tarfile.open(filename, 'r:gz') as tar:
-                pdf_members = [member for member in tar.getmembers() if member.name.endswith('.pdf')]
-                for member in pdf_members:
-                    member.name = os.path.basename(member.name)  # Remove any directory structure
-                    tar.extract(member, path='pdfs')  # Extract to the 'pdfs' directory
-                    pdf_name = os.path.basename(member.name)
-                    #print(f"PDF '{pdf_name}' extracted from '{filename}' and saved in the 'pdfs' directory.")
-                    pdf_name_list.append(f"./pdfs/{pdf_name}")
-                    success = True  # Extraction successful
-                result = (pmc_id, pdf_name_list)  # Store the result
-
-        except (tarfile.ReadError, zlib.error) as e:
-            success = False
-            print(f"Error extracting content from '{filename}': {str(e)}. Skipping extraction.")
+            retries = 0
+            while retries < MAX_RETRIES:
+                try:
+                    with tarfile.open(filename, 'r:gz') as tar:
+                        pdf_members = [member for member in tar.getmembers() if member.name.endswith('.pdf')]
+                        for member in pdf_members:
+                            member.name = os.path.basename(member.name)  # Remove any directory structure
+                            tar.extract(member, path='pdfs')  # Extract to the 'pdfs' directory
+                            pdf_name = os.path.basename(member.name)
+                            pdf_name_list.append(f"./pdfs/{pdf_name}")
+                            success = True  # Extraction successful
+                        result = (pmc_id, pdf_name_list)  # Store the result
+                    break
+                except (tarfile.ReadError, zlib.error) as e:
+                    retries += 1
+                    if retries == MAX_RETRIES:
+                        success = False
+                        print(f"Error extracting content from '{filename}': {str(e)}. Skipping extraction.")
+                        break
+                    else:
+                        print(f"Retrying extraction... Attempt {retries}/{MAX_RETRIES}")
 
         finally:
             try:
                 # Delete the tar.gz file
                 os.remove(filename)
-                #print(f"File '{filename}' deleted.")
             except OSError:
                 print(f"Error deleting file '{filename}'. Skipping deletion.")
 
